@@ -1,0 +1,79 @@
+﻿name: Nightly Upstream Rebase Sync
+
+on:
+  schedule:
+    - cron: "15 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-nightly-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Clone fork and fetch upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch upstream main --no-tags
+          git fetch origin --no-tags
+
+      - name: Fast-forward fork main to upstream/main
+        run: |
+          cd repo
+          git push origin refs/remotes/upstream/main:refs/heads/main
+
+      - name: Rebase feature branches onto upstream/main
+        id: rebase
+        run: |
+          cd repo
+          upstream_sha=$(git rev-parse --short upstream/main)
+          echo "upstream_sha=$upstream_sha" >> "$GITHUB_OUTPUT"
+          conflicts=""
+          for branch in feat/orchestrator-usage-limits feat/mcp-provider-limits-and-external-mcp; do
+            if ! git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+              echo "Skipping missing branch: $branch"
+              continue
+            fi
+            git checkout -B "$branch" "refs/remotes/origin/$branch"
+            if git rebase upstream/main; then
+              git push --force-with-lease origin "HEAD:refs/heads/$branch"
+              echo "Rebased $branch cleanly onto $upstream_sha"
+            else
+              git rebase --abort || true
+              echo "Conflict rebasing $branch onto $upstream_sha"
+              conflicts="${conflicts}${branch} "
+            fi
+          done
+          echo "conflicts=$(echo "$conflicts" | xargs)" >> "$GITHUB_OUTPUT"
+
+      - name: Report conflicts if any
+        if: steps.rebase.outputs.conflicts != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFLICTS: ${{ steps.rebase.outputs.conflicts }}
+          UPSTREAM_SHA: ${{ steps.rebase.outputs.upstream_sha }}
+        run: |
+          title="Nightly upstream rebase conflict ($UPSTREAM_SHA)"
+          body="Automated rebase onto \`pingdotgg/t3code@main\` (\`$UPSTREAM_SHA\`) hit a conflict on: \`$CONFLICTS\`. Conflicted branches were aborted cleanly and not force-pushed."
+          existing=$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "Nightly upstream rebase conflict in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment -R "$GITHUB_REPOSITORY" "$existing" --body "$body"
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
+          exit 1
