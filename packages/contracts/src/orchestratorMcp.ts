@@ -644,6 +644,21 @@ export const OrchestratorMcpModelOption = Schema.Struct({
 });
 export type OrchestratorMcpModelOption = typeof OrchestratorMcpModelOption.Type;
 
+export const OrchestratorMcpProviderUsageWindow = Schema.Struct({
+  label: Schema.String,
+  usedPercent: NonNegativeInt,
+  resetsAt: Schema.optional(IsoDateTime),
+  modelIds: Schema.optional(Schema.Array(Schema.String)),
+});
+export type OrchestratorMcpProviderUsageWindow = typeof OrchestratorMcpProviderUsageWindow.Type;
+
+/** Last observed usage probe. A provider at 100% can still start an explicit delegated task. */
+export const OrchestratorMcpProviderUsage = Schema.Struct({
+  checkedAt: IsoDateTime,
+  windows: Schema.Array(OrchestratorMcpProviderUsageWindow),
+});
+export type OrchestratorMcpProviderUsage = typeof OrchestratorMcpProviderUsage.Type;
+
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
@@ -662,6 +677,7 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),
+  usage: Schema.optional(OrchestratorMcpProviderUsage),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 

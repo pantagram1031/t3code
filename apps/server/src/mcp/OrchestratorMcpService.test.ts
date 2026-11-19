@@ -2210,6 +2210,139 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect(
+    "capabilities exposes allowlisted compact usage windows and drops expired or failed probes",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-09-13T12:00:00.000Z"));
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const failedInstanceId = ProviderInstanceId.make("antigravity");
+        const providers: ReadonlyArray<ServerProvider> = [
+          {
+            ...providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+              model: "gpt-5.4",
+            }),
+            usageLimits: {
+              checkedAt: "2026-09-13T11:55:00.000Z",
+              credentialFingerprint: "sha256:do-not-expose",
+              zeroSpendCap: false,
+              externalUsage: { label: "Billing", url: "https://example.invalid/billing" },
+              resetCredits: {
+                availableCount: 1,
+                nextCreditId: "credit-secret-1",
+                options: [
+                  {
+                    creditId: "credit-secret-1",
+                    label: "Reset",
+                    description: "Reset weekly",
+                    availableCount: 1,
+                  },
+                ],
+              },
+              windows: [
+                {
+                  id: "primary",
+                  kind: "session",
+                  label: "5h",
+                  usedPercent: 99.6,
+                  resetsAt: "2026-09-13T15:00:00.000Z",
+                  windowDurationMins: 300,
+                },
+                {
+                  id: "expired",
+                  kind: "weekly",
+                  label: "Weekly",
+                  usedPercent: 100,
+                  resetsAt: "2026-09-13T11:00:00.000Z",
+                },
+                {
+                  id: "model-pool",
+                  kind: "other",
+                  label: "Pro pool",
+                  usedPercent: 42.2,
+                  modelIds: ["gpt-5.4"],
+                  providerIds: ["codex"],
+                },
+              ],
+            },
+          },
+          providerSnapshot({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: "claude-sonnet-4-6",
+          }),
+          {
+            ...providerSnapshot({
+              instanceId: failedInstanceId,
+              driver: ProviderDriverKind.make("antigravity"),
+              model: "ant-model",
+            }),
+            usageLimits: {
+              checkedAt: "2026-09-13T11:55:00.000Z",
+              windows: [
+                {
+                  id: "stale",
+                  kind: "session",
+                  label: "5h",
+                  usedPercent: 80,
+                  resetsAt: "2026-09-13T15:00:00.000Z",
+                },
+              ],
+              unavailable: { reason: "probeFailed", message: "401 raw upstream token error" },
+            },
+          },
+        ];
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(parentProjection([])),
+          }),
+          ServerSettings.layerTest({}),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed(providers),
+          }),
+          adapterRegistryLayer([codexInstanceId, claudeInstanceId, failedInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const capabilities = yield* service.capabilities(scope);
+          const byId = new Map(
+            capabilities.providers.map((provider) => [provider.providerInstanceId, provider]),
+          );
+
+          const codex = byId.get(codexInstanceId);
+          assert.isDefined(codex);
+          assert.isTrue(codex!.canRunChildTask);
+          assert.deepEqual(codex!.constraints, []);
+          assert.deepEqual(codex!.usage, {
+            checkedAt: "2026-09-13T11:55:00.000Z",
+            windows: [
+              {
+                label: "5h",
+                usedPercent: 100,
+                resetsAt: "2026-09-13T15:00:00.000Z",
+              },
+              {
+                label: "Pro pool",
+                usedPercent: 42,
+                modelIds: ["gpt-5.4"],
+              },
+            ],
+          });
+          assert.isUndefined(byId.get(claudeInstanceId)?.usage);
+          assert.isUndefined(byId.get(failedInstanceId)?.usage);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }),
+  );
+
   describe("listed models", () => {
     const opencodeInstanceId = ProviderInstanceId.make("opencode");
     const model = (slug: string, extra: Partial<ServerProvider["models"][number]> = {}) => ({

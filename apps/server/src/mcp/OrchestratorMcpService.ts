@@ -17,6 +17,7 @@ import {
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
   type OrchestratorMcpModelOption,
+  type OrchestratorMcpProviderUsage,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
   type OrchestratorMcpCreatedThread,
@@ -448,6 +449,32 @@ export const requireAdvertisedModel = (provider: ServerProvider, model: string) 
     ),
   );
 };
+
+function providerUsageSummary(
+  limits: ServerProvider["usageLimits"],
+  now: number,
+): OrchestratorMcpProviderUsage | undefined {
+  if (limits === undefined || limits.unavailable !== undefined) return undefined;
+  const windows = limits.windows.flatMap((window) => {
+    if (window.resetsAt !== undefined) {
+      const resetsAtMs = Date.parse(window.resetsAt);
+      if (Number.isFinite(resetsAtMs) && resetsAtMs <= now) {
+        return [];
+      }
+    }
+    return [
+      {
+        label: window.label,
+        usedPercent: Math.max(0, Math.min(100, Math.round(window.usedPercent))),
+        ...(window.resetsAt === undefined ? {} : { resetsAt: window.resetsAt }),
+        ...(window.modelIds === undefined || window.modelIds.length === 0
+          ? {}
+          : { modelIds: [...window.modelIds] }),
+      },
+    ];
+  });
+  return windows.length === 0 ? undefined : { checkedAt: limits.checkedAt, windows };
+}
 
 function providerConstraints(
   provider: ServerProvider | undefined,
@@ -2695,6 +2722,7 @@ const make = Effect.gen(function* () {
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
       const inherited = parent?.thread.modelSelection;
+      const now = yield* Clock.currentTimeMillis;
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
@@ -2723,6 +2751,10 @@ const make = Effect.gen(function* () {
             enabledForCaller ? provider : { ...provider, enabled: false },
             orchestrationCapableInstanceIds.has(provider.instanceId),
           );
+          const usage =
+            enabledForCaller && provider.enabled
+              ? providerUsageSummary(provider.usageLimits, now)
+              : undefined;
           const { listed, omitted } = listCapabilityModels({
             provider,
             preferences: settings.providerModelPreferences?.[provider.instanceId],
@@ -2757,6 +2789,7 @@ const make = Effect.gen(function* () {
             canRunChildTask: constraints.length === 0,
             canRunCrossProviderChildTask: constraints.length === 0,
             constraints: [...constraints],
+            ...(usage === undefined ? {} : { usage }),
           };
         }),
         features: {
