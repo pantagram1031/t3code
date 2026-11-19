@@ -765,10 +765,43 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
 
     // regression: #32022 Claude Plan mode asks before every non-read-only MCP call
     assert.include(readOnlyToolNames, "mcp__t3-code__t3_background_wait");
+    assert.include(readOnlyToolNames, "mcp__t3-code__t3_provider_limits");
     assert.deepEqual(
       [...ClaudeAdapterV2.CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS].sort(),
       readOnlyToolNames,
     );
+  });
+
+  it("injects configured external MCP servers (e.g. pantadex) and pre-approves them when not read-only", () => {
+    const threadId = ThreadId.make("thread:external-mcp");
+    const mcpSession = {
+      ...mcpSessionFor(threadId),
+      externalMcpServers: [
+        {
+          name: "pantadex",
+          transport: "http" as const,
+          url: "https://dex.pantaserver.duckdns.org/claude+hermes+humanize+image+pv+ops/mcp",
+        },
+      ],
+    };
+
+    const fullAccess = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: false,
+    });
+    assert.include(fullAccess.allowedTools ?? [], "mcp__pantadex__*");
+    assert.include(fullAccess.allowedTools ?? [], ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD);
+    assert.deepEqual(fullAccess.mcpServers?.pantadex, {
+      type: "http",
+      url: "https://dex.pantaserver.duckdns.org/claude+hermes+humanize+image+pv+ops/mcp",
+    });
+
+    const readOnly = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: true,
+    });
+    assert.notInclude(readOnly.allowedTools ?? [], "mcp__pantadex__*");
+    assert.isDefined(readOnly.mcpServers?.pantadex);
   });
 });
 

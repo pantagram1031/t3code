@@ -5494,4 +5494,130 @@ describe("OrchestratorMcpService thread stop", () => {
       }).pipe(Effect.provide(layerTest));
     }),
   );
+
+  it.effect("exposes live usageLimits in capabilities and t3_provider_limits with optional refresh", () =>
+    Effect.gen(function* () {
+      const codexId = ProviderInstanceId.make("codex");
+      const claude1Id = ProviderInstanceId.make("claudeAgent");
+      const claude2Id = ProviderInstanceId.make("claudeAgent2");
+      const agyId = ProviderInstanceId.make("antigravity");
+      const checkedAt = "2026-11-19T09:00:00.000Z";
+      const refreshCalls = yield* Ref.make<Array<string>>([]);
+
+      const makeProvider = (
+        instanceId: ProviderInstanceId,
+        driver: string,
+        displayName: string,
+        usedPercent: number,
+      ): ServerProvider =>
+        ({
+          instanceId,
+          driver: ProviderDriverKind.make(driver),
+          provider: ProviderDriverKind.make(driver),
+          displayName,
+          enabled: true,
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          usageLimits: {
+            checkedAt,
+            windows: [
+              {
+                id: "weekly",
+                kind: "weekly",
+                label: "7-day",
+                usedPercent,
+                resetsAt: "2026-11-20T00:00:00.000Z",
+                windowDurationMins: 10080,
+              },
+            ],
+          },
+        }) as unknown as ServerProvider;
+
+      let providers: ReadonlyArray<ServerProvider> = [
+        makeProvider(codexId, "codex", "Codex", 47),
+        makeProvider(claude1Id, "claudeAgent", "Claude 1", 72),
+        makeProvider(claude2Id, "claudeAgent", "Claude 2", 12),
+        makeProvider(agyId, "antigravity", "Antigravity", 30),
+      ];
+
+      const scope: McpInvocationScope = {
+        _tag: "client",
+        access: "full-access",
+        clientId: "test-limits",
+        capabilities: new Set(["orchestration"]),
+      } as unknown as McpInvocationScope;
+
+      const testLayer = layerOrchestratorService.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            ServerSettings.layerTest({
+              providerInstances: {
+                [codexId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+                [claude1Id]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+                [claude2Id]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+                [agyId]: { driver: ProviderDriverKind.make("antigravity"), enabled: true },
+              },
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.sync(() => providers),
+              refresh: () =>
+                Ref.update(refreshCalls, (calls) => [...calls, "all"]).pipe(
+                  Effect.as(providers),
+                ),
+              refreshInstance: (instanceId) =>
+                Ref.update(refreshCalls, (calls) => [...calls, String(instanceId)]).pipe(
+                  Effect.map(() => {
+                    providers = providers.map((p) =>
+                      p.instanceId === instanceId
+                        ? makeProvider(claude1Id, "claudeAgent", "Claude 1", 80)
+                        : p,
+                    );
+                    return providers;
+                  }),
+                ),
+            }),
+            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+              list: () => Effect.succeed([codexId, claude1Id, claude2Id, agyId]),
+            }),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const caps = yield* service.capabilities(scope);
+        const codexCap = caps.providers.find((p) => p.providerInstanceId === codexId);
+        assert.equal(codexCap?.usageLimits?.windows[0]?.usedPercent, 47);
+
+        const allLimits = yield* service.providerLimits(scope, {});
+        assert.equal(allLimits.providers.length, 4);
+        assert.equal(
+          allLimits.providers.find((p) => p.providerInstanceId === claude2Id)?.usageLimits?.windows[0]
+            ?.usedPercent,
+          12,
+        );
+        assert.deepEqual(yield* Ref.get(refreshCalls), []);
+
+        const refreshedClaude1 = yield* service.providerLimits(scope, {
+          providerInstanceId: claude1Id,
+          refresh: true,
+        });
+        assert.equal(refreshedClaude1.providers.length, 1);
+        assert.equal(refreshedClaude1.providers[0]?.usageLimits?.windows[0]?.usedPercent, 80);
+        assert.deepEqual(yield* Ref.get(refreshCalls), ["claudeAgent"]);
+      }).pipe(Effect.provide(testLayer));
+    }),
+  );
 });

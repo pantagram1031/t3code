@@ -6,6 +6,7 @@ export const TOOL_SEARCH = "tool_search";
 /** What a deferring client lists before it searches. Pi's extension declares the same three. */
 const DIRECT_TOOLS: ReadonlySet<string> = new Set([
   "orchestrator_capabilities",
+  "t3_provider_limits",
   "delegate_task",
   "task_status",
   TOOL_SEARCH,

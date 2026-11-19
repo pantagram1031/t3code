@@ -7,6 +7,16 @@ import type * as Effect from "effect/Effect";
  */
 export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 
+export interface ExternalMcpServerSessionConfig {
+  readonly name: string;
+  readonly transport: "http" | "stdio";
+  readonly url?: string | undefined;
+  readonly headers?: ReadonlyArray<{ readonly name: string; readonly value: string }> | undefined;
+  readonly command?: string | undefined;
+  readonly args?: ReadonlyArray<string> | undefined;
+  readonly env?: ReadonlyArray<{ readonly name: string; readonly value: string }> | undefined;
+}
+
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -20,6 +30,8 @@ export interface McpProviderSessionConfig {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
+  /** External MCP servers (e.g. Pantadex) injected natively alongside T3 Code's MCP server. */
+  readonly externalMcpServers?: ReadonlyArray<ExternalMcpServerSessionConfig> | undefined;
 }
 
 export function withAgentDeviceEnvironment(

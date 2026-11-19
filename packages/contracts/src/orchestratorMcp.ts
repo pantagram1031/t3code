@@ -44,6 +44,7 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { ServerProviderUsageLimits } from "./providerUsageLimits.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000));
 const OrchestratorMcpTitle = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
@@ -662,8 +663,40 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),
+  usageLimits: Schema.optional(ServerProviderUsageLimits),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
+
+export const OrchestratorMcpProviderLimitsInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  providerInstanceId: Schema.optional(
+    ProviderInstanceId.annotate({
+      description: "Optional provider instance id to inspect or refresh. Omit for all providers.",
+    }),
+  ),
+  refresh: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Set true to force a fresh usage-limit probe before returning.",
+    }),
+  ),
+});
+export type OrchestratorMcpProviderLimitsInput = typeof OrchestratorMcpProviderLimitsInput.Type;
+
+export const OrchestratorMcpProviderLimitsEntry = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
+  displayName: Schema.NullOr(Schema.String),
+  enabled: Schema.Boolean,
+  canRunChildTask: Schema.Boolean,
+  usageLimits: Schema.optional(ServerProviderUsageLimits),
+});
+export type OrchestratorMcpProviderLimitsEntry = typeof OrchestratorMcpProviderLimitsEntry.Type;
+
+export const OrchestratorMcpProviderLimitsResult = Schema.Struct({
+  checkedAt: IsoDateTime,
+  providers: Schema.Array(OrchestratorMcpProviderLimitsEntry),
+});
+export type OrchestratorMcpProviderLimitsResult = typeof OrchestratorMcpProviderLimitsResult.Type;
 
 export const OrchestratorMcpEnvironmentLink = Schema.Struct({
   environmentId: EnvironmentId,

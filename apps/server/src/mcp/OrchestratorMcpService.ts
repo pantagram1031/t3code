@@ -16,6 +16,8 @@ import {
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpProviderLimitsInput,
+  type OrchestratorMcpProviderLimitsResult,
   type OrchestratorMcpModelOption,
   type OrchestratorMcpCreateThreadsInput,
   type OrchestratorMcpCreateThreadsResult,
@@ -176,6 +178,10 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input?: OrchestratorMcpCapabilitiesInput,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
+  readonly providerLimits: (
+    scope: McpInvocationScope,
+    input?: OrchestratorMcpProviderLimitsInput,
+  ) => Effect.Effect<OrchestratorMcpProviderLimitsResult, OrchestratorMcpFailure>;
   readonly delegateTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
@@ -2757,6 +2763,7 @@ const make = Effect.gen(function* () {
             canRunChildTask: constraints.length === 0,
             canRunCrossProviderChildTask: constraints.length === 0,
             constraints: [...constraints],
+            ...(provider.usageLimits === undefined ? {} : { usageLimits: provider.usageLimits }),
           };
         }),
         features: {
@@ -2769,6 +2776,52 @@ const make = Effect.gen(function* () {
           scheduledTasks: true,
           maxBatchThreads: 20,
         },
+      };
+    }),
+    providerLimits: Effect.fn("OrchestratorMcpService.providerLimits")(function* (
+      scope,
+      input = {},
+    ) {
+      const { parent } = yield* loadCaller(scope, []);
+      const providers =
+        input.refresh === true
+          ? input.providerInstanceId !== undefined
+            ? yield* providerRegistry.refreshInstance(input.providerInstanceId)
+            : yield* providerRegistry.refresh()
+          : yield* loadProviders;
+      const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const filtered =
+        input.providerInstanceId === undefined
+          ? providers
+          : providers.filter((provider) => provider.instanceId === input.providerInstanceId);
+      const now = yield* DateTime.now;
+      return {
+        checkedAt: DateTime.formatIso(now),
+        providers: filtered.map((provider) => {
+          const enabledForCaller =
+            parent === undefined ||
+            resolveProjectProviderInstanceEnabled(
+              settings,
+              parent.thread.projectId,
+              provider.instanceId,
+            );
+          const enabled = provider.enabled && enabledForCaller;
+          const constraints = providerConstraints(
+            enabledForCaller ? provider : { ...provider, enabled: false },
+            orchestrationCapableInstanceIds.has(provider.instanceId),
+          );
+          return {
+            providerInstanceId: provider.instanceId,
+            driverKind: provider.driver,
+            displayName: provider.displayName ?? null,
+            enabled,
+            canRunChildTask: constraints.length === 0,
+            ...(provider.usageLimits === undefined ? {} : { usageLimits: provider.usageLimits }),
+          };
+        }),
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {

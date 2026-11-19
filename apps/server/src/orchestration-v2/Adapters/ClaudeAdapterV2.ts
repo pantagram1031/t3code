@@ -2542,6 +2542,7 @@ export const CLAUDE_T3_MCP_TOOL_WILDCARD = "mcp__t3-code__*";
 // Keep in sync with OrchestratorToolkit Tool.Readonly annotations; ClaudeAdapterV2.test.ts checks this.
 export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__orchestrator_capabilities",
+  "mcp__t3-code__t3_provider_limits",
   "mcp__t3-code__list_scheduled_tasks",
   "mcp__t3-code__t3_background_wait",
   "mcp__t3-code__t3_thread_list",
@@ -2578,12 +2579,37 @@ export function claudeMcpQueryOverrides(input: {
   if (session === undefined) {
     return input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools };
   }
+  const externalServers: Record<string, NonNullable<ClaudeQueryOptions["mcpServers"]>[string]> = {};
+  const externalAllowedTools: Array<string> = [];
+  for (const server of session.externalMcpServers ?? []) {
+    if (server.name === "t3-code") continue;
+    if (server.transport === "http" && server.url) {
+      externalServers[server.name] = {
+        type: "http",
+        url: server.url,
+        ...(server.headers && server.headers.length > 0
+          ? { headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) }
+          : {}),
+      };
+      if (!input.readOnlySandbox) externalAllowedTools.push(`mcp__${server.name}__*`);
+    } else if (server.transport === "stdio" && server.command) {
+      externalServers[server.name] = {
+        command: server.command,
+        ...(server.args ? { args: [...server.args] } : {}),
+        ...(server.env && server.env.length > 0
+          ? { env: Object.fromEntries(server.env.map((e) => [e.name, e.value])) }
+          : {}),
+      };
+      if (!input.readOnlySandbox) externalAllowedTools.push(`mcp__${server.name}__*`);
+    }
+  }
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
-    : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+    : [CLAUDE_T3_MCP_TOOL_WILDCARD, ...externalAllowedTools];
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
+      ...externalServers,
       "t3-code": {
         type: "http",
         url: session.endpoint,

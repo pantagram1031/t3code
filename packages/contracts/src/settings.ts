@@ -1605,6 +1605,40 @@ export const ServerSettings = Schema.Struct({
 
   /** Sent by the Usage tab with each summary request to this environment; edit in settings.json. Invalid values are ignored. */
   usageModelFilter: ForwardCompatibleOptional(UsageModelFilter),
+
+  /** External MCP servers (e.g., Pantadex) injected natively into agent sessions. */
+  externalMcpServers: Schema.Array(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+      transport: Schema.Literals(["http", "stdio"]).pipe(
+        Schema.withDecodingDefault(Effect.succeed("http")),
+      ),
+      url: Schema.optional(TrimmedNonEmptyString),
+      /** Optional per-driver URL overrides (e.g., dialect-specific Pantadex endpoints). */
+      driverUrls: Schema.optional(Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString)),
+      headers: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            name: TrimmedNonEmptyString,
+            value: Schema.String,
+          }),
+        ),
+      ),
+      command: Schema.optional(TrimmedNonEmptyString),
+      args: Schema.optional(Schema.Array(Schema.String)),
+      env: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            name: TrimmedNonEmptyString,
+            value: Schema.String,
+          }),
+        ),
+      ),
+      /** Optional driver allowlist; omit or leave empty to inject into every agent session. */
+      drivers: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 

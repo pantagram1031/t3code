@@ -563,6 +563,86 @@ export const layerWithOptions = (
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
+      const resolveExternalMcpServers = Effect.fn("ProviderSessionManagerV2.resolveExternalMcpServers")(
+        function* (providerInstanceId: ProviderInstanceId) {
+          if (Option.isNone(serverSettings)) return [];
+          return yield* serverSettings.value.getSettings.pipe(
+            Effect.map((settings) => {
+              const configured = settings.externalMcpServers ?? [];
+              if (configured.length === 0) return [];
+              const driver =
+                (Object.hasOwn(settings.providerInstances, providerInstanceId)
+                  ? settings.providerInstances[providerInstanceId]?.driver
+                  : undefined) ?? String(providerInstanceId);
+              return configured
+                .filter(
+                  (server) =>
+                    server.enabled !== false &&
+                    (server.drivers === undefined ||
+                      server.drivers.length === 0 ||
+                      server.drivers.includes(driver) ||
+                      server.drivers.includes(providerInstanceId)),
+                )
+                .map((server) => {
+                  const resolvedUrl =
+                    (server.driverUrls !== undefined && Object.hasOwn(server.driverUrls, driver)
+                      ? server.driverUrls[driver]
+                      : undefined) ?? server.url;
+                  return {
+                    name: server.name,
+                    transport: server.transport,
+                    ...(resolvedUrl === undefined ? {} : { url: resolvedUrl }),
+                    ...(server.headers === undefined ? {} : { headers: server.headers }),
+                    ...(server.command === undefined ? {} : { command: server.command }),
+                    ...(server.args === undefined ? {} : { args: server.args }),
+                    ...(server.env === undefined ? {} : { env: server.env }),
+                  };
+                });
+            }),
+            Effect.orElseSucceed(() => []),
+          );
+        },
+      );
+      const externalMcpServersEqual = (
+        left: ReadonlyArray<import("@t3tools/provider-core/server/mcpSession").ExternalMcpServerSessionConfig>,
+        right: ReadonlyArray<import("@t3tools/provider-core/server/mcpSession").ExternalMcpServerSessionConfig>,
+      ): boolean => {
+        if (left.length !== right.length) return false;
+        for (let i = 0; i < left.length; i += 1) {
+          const a = left[i]!;
+          const b = right[i]!;
+          if (
+            a.name !== b.name ||
+            a.transport !== b.transport ||
+            a.url !== b.url ||
+            a.command !== b.command
+          ) {
+            return false;
+          }
+          const aArgs = a.args ?? [];
+          const bArgs = b.args ?? [];
+          if (aArgs.length !== bArgs.length || aArgs.some((v, idx) => v !== bArgs[idx])) {
+            return false;
+          }
+          const aHeaders = a.headers ?? [];
+          const bHeaders = b.headers ?? [];
+          if (
+            aHeaders.length !== bHeaders.length ||
+            aHeaders.some((h, idx) => h.name !== bHeaders[idx]?.name || h.value !== bHeaders[idx]?.value)
+          ) {
+            return false;
+          }
+          const aEnv = a.env ?? [];
+          const bEnv = b.env ?? [];
+          if (
+            aEnv.length !== bEnv.length ||
+            aEnv.some((e, idx) => e.name !== bEnv[idx]?.name || e.value !== bEnv[idx]?.value)
+          ) {
+            return false;
+          }
+        }
+        return true;
+      };
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
@@ -577,6 +657,7 @@ export const layerWithOptions = (
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
                 const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
                   yield* agentAccessSettings(threadId);
+                const externalMcpServers = yield* resolveExternalMcpServers(providerInstanceId);
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests", "issues"]);
@@ -608,7 +689,8 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
                     // A credential issued while the lineage read failed is replaced once it works.
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    externalMcpServersEqual(existing.externalMcpServers ?? [], externalMcpServers)
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -624,6 +706,7 @@ export const layerWithOptions = (
                 });
                 yield* mcpSessions.set({
                   ...credential.config,
+                  ...(externalMcpServers.length === 0 ? {} : { externalMcpServers }),
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(

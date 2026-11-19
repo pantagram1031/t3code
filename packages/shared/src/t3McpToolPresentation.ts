@@ -7,6 +7,7 @@ export interface T3McpToolPresentation {
 
 export type T3McpToolSummaryAction =
   | "capabilities"
+  | "provider-limits"
   | "delegate"
   | "task-status"
   | "task-cancel"
@@ -208,6 +209,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",
+  ),
+  t3_provider_limits: tool(
+    ["Check", "Checking", "Checked", "provider usage limits"],
+    "provider-limits",
   ),
   delegate_task: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
   task_status: tool(["Get", "Getting", "Got", "delegated task status"], "task-status"),

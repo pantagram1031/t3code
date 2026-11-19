@@ -1,6 +1,8 @@
 import {
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
+  OrchestratorMcpProviderLimitsInput,
+  OrchestratorMcpProviderLimitsResult,
   OrchestrationV2StopWorkflowInput,
   OrchestratorMcpEnvironmentLinkInput,
   OrchestratorMcpEnvironmentLinkResult,
@@ -74,7 +76,7 @@ const threadMetadataDependencies = [
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works.",
+    "List providers, models, options, usage limits, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works.",
   parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
@@ -82,6 +84,20 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   dependencies,
 })
   .annotate(Tool.Title, "Get orchestration capabilities")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const ProviderLimitsTool = Tool.make("t3_provider_limits", {
+  description:
+    "Read live subscription usage limits, rolling windows (5h/weekly usedPercent), and reset timestamps across configured providers (Codex, Claude 1/2, Antigravity). Pass `refresh:true` to force a fresh probe.",
+  parameters: OrchestratorMcpProviderLimitsInput,
+  success: OrchestratorMcpProviderLimitsResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Get provider usage limits")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -364,6 +380,7 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
+  ProviderLimitsTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,

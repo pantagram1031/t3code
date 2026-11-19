@@ -994,7 +994,39 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
-function acpMcpContext(
+function externalAcpMcpServers(
+  external: ReadonlyArray<McpProviderSession.ExternalMcpServerSessionConfig> | undefined,
+): {
+  readonly stdio: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly all: ReadonlyArray<EffectAcpSchema.McpServer>;
+} {
+  if (!external || external.length === 0) return { stdio: [], all: [] };
+  const stdio: Array<EffectAcpSchema.McpServer> = [];
+  const all: Array<EffectAcpSchema.McpServer> = [];
+  for (const server of external) {
+    if (server.name === "t3-code") continue;
+    if (server.transport === "stdio" && server.command) {
+      const entry: EffectAcpSchema.McpServer = {
+        name: server.name,
+        command: server.command,
+        args: [...(server.args ?? [])],
+        env: [...(server.env ?? [])],
+      };
+      stdio.push(entry);
+      all.push(entry);
+    } else if (server.transport === "http" && server.url) {
+      all.push({
+        type: "http",
+        name: server.name,
+        url: server.url,
+        headers: [...(server.headers ?? [])],
+      });
+    }
+  }
+  return { stdio, all };
+}
+
+export function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
@@ -1003,6 +1035,7 @@ function acpMcpContext(
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
   }
+  const external = externalAcpMcpServers(session.externalMcpServers);
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
     servers: [
@@ -1016,8 +1049,9 @@ function acpMcpContext(
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
         ],
       },
+      ...external.stdio,
     ],
-    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }, ...external.all],
     httpServers:
       mcpOverHttp === true
         ? [
@@ -1032,6 +1066,7 @@ function acpMcpContext(
                   : []),
               ],
             },
+            ...external.all,
           ]
         : [],
     endpoint: session.endpoint,

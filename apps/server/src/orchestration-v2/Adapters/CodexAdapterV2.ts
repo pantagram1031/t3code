@@ -1542,11 +1542,32 @@ function codexThreadRuntimeParams(input: {
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
+  const externalCodexMcpEntries: Record<string, Schema.Json> = {};
+  for (const server of mcpSession?.externalMcpServers ?? []) {
+    if (server.name === "t3-code" || server.name === CODEX_T3_DIRECT_MCP_SERVER) continue;
+    if (server.transport === "http" && server.url) {
+      externalCodexMcpEntries[`mcp_servers.${server.name}`] = {
+        url: server.url,
+        ...(server.headers && server.headers.length > 0
+          ? { http_headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])) }
+          : {}),
+      };
+    } else if (server.transport === "stdio" && server.command) {
+      externalCodexMcpEntries[`mcp_servers.${server.name}`] = {
+        command: server.command,
+        args: [...(server.args ?? [])],
+        ...(server.env && server.env.length > 0
+          ? { env: Object.fromEntries(server.env.map((e) => [e.name, e.value])) }
+          : {}),
+      };
+    }
+  }
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...externalCodexMcpEntries,
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
