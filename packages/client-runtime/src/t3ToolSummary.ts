@@ -1224,6 +1224,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "provider-limits": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Checked provider usage limits {count} time} other {Checked provider usage limits {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to check provider usage limits {count} time} other {Tried to check provider usage limits {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "thread-read": {
       if (threadIds.every((value) => value !== undefined)) {
         const count = new Set(threadIds).size;
