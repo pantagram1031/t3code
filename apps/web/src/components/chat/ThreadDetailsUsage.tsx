@@ -41,7 +41,39 @@ export interface ThreadDetailsUsageInput {
 
 type UsageTone = "error" | "warning" | null;
 
-/** The selected provider's limit windows. Each row reads as room left and opens the usage page. */
+function peerProviderSummaryRows(
+  activeInstanceId: ProviderInstanceId | null,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): ReadonlyArray<{
+  readonly key: string;
+  readonly window: ServerProviderUsageWindow;
+}> {
+  const rows: Array<{ readonly key: string; readonly window: ServerProviderUsageWindow }> = [];
+  for (const provider of providers) {
+    if (!provider.enabled || provider.instanceId === activeInstanceId) continue;
+    const report = collectProviderUsageLimits(provider.instanceId, providers, sources, now);
+    const limits =
+      report?.accounts.find((entry) => entry.instanceId === provider.instanceId)?.limits ??
+      provider.usageLimits;
+    if (!limits || limits.windows.length === 0) continue;
+    // Show the tightest (lowest remaining %) window per peer provider so all 4 fit cleanly.
+    const tightest = [...limits.windows].sort((a, b) => remainingPercent(a) - remainingPercent(b))[0];
+    if (!tightest) continue;
+    const providerLabel = provider.displayName?.trim() || String(provider.instanceId);
+    rows.push({
+      key: `${provider.instanceId}:${tightest.id}`,
+      window: {
+        ...tightest,
+        label: `${providerLabel} · ${tightest.label}`,
+      },
+    });
+  }
+  return rows;
+}
+
+/** The selected provider's limit windows plus compact rows for other enabled providers. Each row opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -60,8 +92,9 @@ export function ThreadDetailsUsage({
   const limits =
     report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
     providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
-  const notice = limitsNotice(limits, m);
+  const peerRows = peerProviderSummaryRows(providerInstanceId, providers, sources, now);
+  if (!limits && peerRows.length === 0) return null;
+  const notice = limits ? limitsNotice(limits, m) : null;
 
   return (
     <ThreadDetailsSection
@@ -70,18 +103,23 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
-          <UsageRow
-            label={gt("Limits", { $context: "usage limits row label" })}
-            fill={null}
-            tone={null}
-            value={gt("Unavailable")}
-            tooltip={<span className="text-foreground">{notice}</span>}
-            opensUsage
-          />
-        ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
-        )}
+        {limits ? (
+          notice ? (
+            <UsageRow
+              label={gt("Limits", { $context: "usage limits row label" })}
+              fill={null}
+              tone={null}
+              value={gt("Unavailable")}
+              tooltip={<span className="text-foreground">{notice}</span>}
+              opensUsage
+            />
+          ) : (
+            limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          )
+        ) : null}
+        {peerRows.map((entry) => (
+          <LimitRow key={entry.key} window={entry.window} now={now} />
+        ))}
       </div>
     </ThreadDetailsSection>
   );
